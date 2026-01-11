@@ -1,66 +1,47 @@
+export type TimelineAction = "play" | "pause" | "rate" | undefined;
+export type TimelineSubscriber = (time: number, action?: TimelineAction) => void;
+
 export class Timeline {
   private _currentTime = 0;
   private _duration = 0;
-  private _playing = false;
-  private _videoFPS = 30; // frames per second of the original video
-  private _playbackRate = 1; // playback speed multiplier (0.25x, 0.5x, 1x, 2x, 4x)
-
-  private _subscribers: ((time: number) => void)[] = [];
+  private _playbackRate = 1;
+  private _subscribers: TimelineSubscriber[] = [];
 
   setDuration(duration: number) {
-    this._duration = duration;
-  }
-
-  setVideoFPS(fps: number) {
-    this._videoFPS = fps;
+    this._duration = Math.max(this._duration, duration);
   }
 
   setPlaybackRate(rate: number) {
     this._playbackRate = rate;
+    this.notify(this._currentTime, "rate");
   }
 
-  play() {
-    if (!this._playing) {
-      this._playing = true;
-      this._tick();
-    }
+  subscribe(cb: TimelineSubscriber) {
+    this._subscribers.push(cb);
+    return () => {
+      this._subscribers = this._subscribers.filter(s => s !== cb);
+    };
   }
 
-  pause() {
-    this._playing = false;
-  }
-
-  // Step exactly one video frame
-  stepFrames(frames: number) {
-    const delta = frames / this._videoFPS;
-    this.seek(this._currentTime + delta);
+  notify(time: number, action?: TimelineAction) {
+    this._currentTime = time;
+    this._subscribers.forEach(cb => cb(time, action));
   }
 
   seek(time: number) {
-    this._currentTime = Math.max(0, Math.min(time, this._duration));
-    this._subscribers.forEach((cb) => cb(this._currentTime));
+    this.notify(Math.max(0, Math.min(time, this._duration)));
   }
 
-  subscribe(callback: (time: number) => void) {
-    this._subscribers.push(callback);
+  stepFrames(frames: number, nativeFPS = 30) {
+    this.seek(this._currentTime + frames / nativeFPS);
   }
 
-  private _tick() {
-    if (!this._playing) return;
+  play() {
+    this.notify(this._currentTime, "play");
+  }
 
-    const interval = 1000 / this._videoFPS; // use videoFPS as base for tick resolution
-    setTimeout(() => {
-      this._currentTime += (1 / this._videoFPS) * this._playbackRate;
-
-      if (this._currentTime >= this._duration) {
-        this._currentTime = this._duration;
-        this._playing = false;
-      }
-
-      this._subscribers.forEach((cb) => cb(this._currentTime));
-
-      if (this._playing) this._tick();
-    }, interval);
+  pause() {
+    this.notify(this._currentTime, "pause");
   }
 
   get currentTime() {
@@ -73,9 +54,5 @@ export class Timeline {
 
   get playbackRate() {
     return this._playbackRate;
-  }
-
-  get videoFPS() {
-    return this._videoFPS;
   }
 }

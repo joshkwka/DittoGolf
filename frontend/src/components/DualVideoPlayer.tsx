@@ -1,8 +1,8 @@
 import VideoPlayer from "./VideoPlayer";
 import { Timeline } from "../core/Timeline";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-const PLAYBACK_OPTIONS = [0.25, 0.5, 1, 2, 4];
+const SPEED_OPTIONS = [0.25, 0.5, 1, 2, 4, 8];
 
 type DualVideoPlayerProps = {
   video1Src: string;
@@ -15,32 +15,48 @@ export default function DualVideoPlayer({
 }: DualVideoPlayerProps) {
   const [timeline] = useState(() => new Timeline());
   const [, forceRender] = useState(0);
-  const [playbackRate, setPlaybackRate] = useState(1);
 
-  // Force re-render when timeline updates (for seek bar)
+  
+
+  const videoRefs = useRef<HTMLVideoElement[]>([]);
+
   useEffect(() => {
-    timeline.subscribe(() => forceRender((v) => v + 1));
+    const unsub = timeline.subscribe(() => forceRender(v => v + 1));
+    return unsub;
   }, [timeline]);
 
-  const togglePlay = () => {
-    if (timeline.currentTime >= timeline.duration) timeline.seek(0);
+  const play = () => {
     timeline.play();
   };
 
-  const pauseTimeline = () => timeline.pause();
-  const stepBackward = () => timeline.stepFrames(-1);
-  const stepForward = () => timeline.stepFrames(1);
+  const pause = () => {
+    timeline.pause();
+  };
 
-  const handlePlaybackChange = (rate: number) => {
-    setPlaybackRate(rate);
-    timeline.setPlaybackRate(rate);
+  const seek = (time: number) => {
+    // Immediately update master video for responsive scrubbing, then notify the
+    // timeline so followers update via subscription.
+    const master = videoRefs.current[0];
+    if (master) master.currentTime = time;
+    timeline.seek(time);
+  };
+
+  const step = (frames: number) => {
+    timeline.stepFrames(frames);
   };
 
   return (
     <div>
-      <div style={{ display: "flex", gap: "10px" }}>
-        <VideoPlayer src={video1Src} timeline={timeline} />
-        <VideoPlayer src={video2Src} timeline={timeline} />
+      <div style={{ display: "flex", gap: 10 }}>
+        {[video1Src, video2Src].map((src, i) => (
+          <VideoPlayer
+            key={src}
+            src={src}
+            timeline={timeline}
+            ref={(el: any) => (videoRefs.current[i] = el)}
+            notifyTimeline={i === 0}
+          />
+        ))}
       </div>
 
       {/* Scrubber */}
@@ -48,43 +64,34 @@ export default function DualVideoPlayer({
         type="range"
         min={0}
         max={timeline.duration}
-        step={1 / timeline.videoFPS} // step per video frame
+        step={0.001}
         value={timeline.currentTime}
-        onChange={(e) => timeline.seek(Number(e.target.value))}
-        style={{ width: "100%", marginTop: "10px" }}
+        onChange={e => seek(Number(e.target.value))}
+        style={{ width: "100%", marginTop: 10 }}
       />
 
       {/* Controls */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "10px",
-          marginTop: "10px",
-        }}
-      >
-        {/* Frame stepping */}
-        <button onClick={stepBackward}>◀</button>
-        <button onClick={stepForward}>▶</button>
+      <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+        <button onClick={() => step(-1)}>◀</button>
+        <button onClick={() => step(1)}>▶</button>
 
-        {/* Playback speed selector */}
         <label>
           Speed:
           <select
-            value={playbackRate}
-            onChange={(e) => handlePlaybackChange(Number(e.target.value))}
-            style={{ marginLeft: "5px" }}
+            value={timeline.playbackRate}
+            onChange={e => timeline.setPlaybackRate(Number(e.target.value))}
+            style={{ marginLeft: 5 }}
           >
-            {PLAYBACK_OPTIONS.map((rate) => (
-              <option key={rate} value={rate}>
-                {rate}x
+            {SPEED_OPTIONS.map(s => (
+              <option key={s} value={s}>
+                {s}×
               </option>
             ))}
           </select>
         </label>
 
-        <button onClick={togglePlay}>Play</button>
-        <button onClick={pauseTimeline}>Pause</button>
+        <button onClick={play}>Play</button>
+        <button onClick={pause}>Pause</button>
       </div>
     </div>
   );

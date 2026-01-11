@@ -1,8 +1,8 @@
 import DualVideoPlayer from "./components/DualVideoPlayer";
 
-function App() {
+export default function App() {
   return (
-    <div style={{ padding: "20px" }}>
+    <div style={{ padding: 20 }}>
       <h1>DittoGolf Dual Video Player</h1>
       <DualVideoPlayer
         video1Src="/videos/video1.mp4"
@@ -11,5 +11,3 @@ function App() {
     </div>
   );
 }
-
-export default App;
