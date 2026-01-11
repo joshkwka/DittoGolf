@@ -1,35 +1,32 @@
 version: "3.9"
 
 services:
-  postgres:
-    image: postgres:18-trixie
-    ports:
-      - "127.0.0.1:5432:5432"
-    environment:
-      - "POSTGRES_PASSWORD=password"
-      - "POSTGRES_USER=user"
-      - "POSTGRES_DB=dittogolf"
-    volumes:
-      - ./schema.sql:/docker-entrypoint-initdb.d/00-schema.sql
-      - ./seed.sql:/docker-entrypoint-initdb.d/01-seed.sql
-  backend:
-    build: ./backend
-    container_name: dittogolf-backend
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./backend:/app
-    environment:
-      - DJANGO_SETTINGS_MODULE=dittogolf_backend.settings
-    depends_on: []
+  # postgres:
+  #   image: postgres:18-trixie
+  #   ports:
+  #     - "5432:5432"
+  #   environment:
+  #     - "POSTGRES_PASSWORD=password"
+  #     - "POSTGRES_USER=user"
+  #     - "POSTGRES_DB=dittogolf"
+  #   volumes:
+  #     - ./schema.sql:/docker-entrypoint-initdb.d/00-schema.sql
+  #     - ./seed.sql:/docker-entrypoint-initdb.d/01-seed.sql
+  # backend:
+  #   build: ./backend
+  #   container_name: ditto-backend
+  #   ports:
+  #     - "8000:8000"
+  #   volumes:
+  #     - ./backend/app:/app/app
+  #   environment:
+  #     - PYTHONUNBUFFERED=1
 
   frontend:
     build: ./frontend
-    container_name: dittogolf-frontend
+    container_name: ditto-frontend
     ports:
-      - "5173:5173"
+      - "3000:80"
     volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    depends_on:
-      - backend
+      - ./frontend/public/videos:/usr/share/nginx/html/videos:ro
+

@@ -1,60 +1,53 @@
-// src/components/VideoPlayer.tsx
-import React, { useRef, useEffect } from "react";
+import { useEffect, useRef } from "react";
+import { Timeline } from "../core/Timeline";
 
-interface Props {
-  fileUrl: string | null;
-  isPlaying: boolean;
-  currentTime: number;
-  playbackRate: number;
-  onLoadedMetadata?: (duration: number) => void;
-}
+type VideoPlayerProps = {
+  src: string;
+  timeline: Timeline;
+};
 
-export default function VideoPlayer({
-  fileUrl,
-  isPlaying,
-  currentTime,
-  playbackRate,
-  onLoadedMetadata
-}: Props) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+export default function VideoPlayer({ src, timeline }: VideoPlayerProps) {
+  const videoRef = useRef<HTMLVideoElement>(null);
 
-  // Sync play / pause
+  // Register duration with timeline
   useEffect(() => {
-    const vid = videoRef.current;
-    if (!vid) return;
-    if (isPlaying) vid.play();
-    else vid.pause();
-  }, [isPlaying]);
+    const video = videoRef.current;
+    if (!video) return;
 
-  // Sync currentTime
+    const onLoaded = () => {
+      timeline.setDuration(Math.max(timeline.duration, video.duration));
+    };
+
+    video.addEventListener("loadedmetadata", onLoaded);
+    return () => video.removeEventListener("loadedmetadata", onLoaded);
+  }, [timeline]);
+
+  // Subscribe to timeline
   useEffect(() => {
-    const vid = videoRef.current;
-    if (!vid) return;
+    const callback = (time: number, action?: "play" | "pause") => {
+      const video = videoRef.current;
+      if (!video) return;
 
-    if (Math.abs(vid.currentTime - currentTime) > 0.03) {
-      vid.currentTime = currentTime;
-    }
-  }, [currentTime]);
+      // Sync time only if needed (prevents jitter)
+      if (Math.abs(video.currentTime - time) > 0.03) {
+        video.currentTime = Math.min(time, video.duration);
+      }
 
-  // Sync playback rate
-  useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.playbackRate = playbackRate;
-    }
-  }, [playbackRate]);
+      if (action === "play") video.play();
+      if (action === "pause") video.pause();
+    };
+
+    timeline.subscribe(callback);
+  }, [timeline]);
 
   return (
-    <div style={{ width: "100%" }}>
-      <video
-        ref={videoRef}
-        src={fileUrl ?? undefined}
-        style={{ width: "100%", border: "1px solid #ddd" }}
-        onLoadedMetadata={() => {
-          if (onLoadedMetadata && videoRef.current) {
-            onLoadedMetadata(videoRef.current.duration);
-          }
-        }}
-      />
-    </div>
+    <video
+      ref={videoRef}
+      src={src}
+      width={400}
+      muted
+      playsInline
+      controls={false}
+    />
   );
 }
