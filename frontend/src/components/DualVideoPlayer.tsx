@@ -2,6 +2,8 @@ import VideoPlayer from "./VideoPlayer";
 import { Timeline } from "../core/Timeline";
 import { useEffect, useState } from "react";
 
+const FPS_OPTIONS = [1, 5, 10, 15, 30, 60, 120, 240];
+
 type DualVideoPlayerProps = {
   video1Src: string;
   video2Src: string;
@@ -14,10 +16,8 @@ export default function DualVideoPlayer({
   const [timeline] = useState(() => new Timeline());
   const [, forceRender] = useState(0);
 
-  // Force React updates while timeline is playing
   useEffect(() => {
-    const callback = () => forceRender((v) => v + 1);
-    timeline.subscribe(callback);
+    timeline.subscribe(() => forceRender((v) => v + 1));
   }, [timeline]);
 
   const togglePlay = () => {
@@ -29,10 +29,6 @@ export default function DualVideoPlayer({
 
   const pauseTimeline = () => timeline.pause();
 
-  const handleScrub = (value: number) => {
-    timeline.seek(value);
-  };
-
   return (
     <div>
       <div style={{ display: "flex", gap: "10px" }}>
@@ -40,18 +36,46 @@ export default function DualVideoPlayer({
         <VideoPlayer src={video2Src} timeline={timeline} />
       </div>
 
-      {/* Universal scrubber */}
+      {/* Scrubber */}
       <input
         type="range"
         min={0}
         max={timeline.duration}
-        step={0.01}
+        step={1 / timeline.fps}
         value={timeline.currentTime}
-        onChange={(e) => handleScrub(Number(e.target.value))}
+        onChange={(e) => timeline.seek(Number(e.target.value))}
         style={{ width: "100%", marginTop: "10px" }}
       />
 
-      <div style={{ marginTop: "10px" }}>
+      {/* Controls */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "10px",
+          marginTop: "10px",
+        }}
+      >
+        {/* Frame stepping */}
+        <button onClick={() => timeline.stepFrames(-1)}>◀</button>
+        <button onClick={() => timeline.stepFrames(1)}>▶</button>
+
+        {/* FPS Selector */}
+        <label>
+          FPS:
+          <select
+            value={timeline.fps}
+            onChange={(e) => timeline.setFPS(Number(e.target.value))}
+            style={{ marginLeft: "5px" }}
+          >
+            {FPS_OPTIONS.map((fps) => (
+              <option key={fps} value={fps}>
+                {fps}
+              </option>
+            ))}
+          </select>
+        </label>
+
         <button onClick={togglePlay}>Play</button>
         <button onClick={pauseTimeline}>Pause</button>
       </div>
