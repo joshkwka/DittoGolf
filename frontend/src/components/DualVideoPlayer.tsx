@@ -64,7 +64,8 @@ export default function DualVideoPlayer({
         type="range"
         min={0}
         max={timeline.duration}
-        step={0.001}
+        // step={0.001}
+        step={1 / 30} // timeline.nativeFPS later
         value={timeline.currentTime}
         onChange={e => seek(Number(e.target.value))}
         style={{ width: "100%", marginTop: 10 }}

@@ -6,6 +6,7 @@ export class Timeline {
   private _duration = 0;
   private _playbackRate = 1;
   private _subscribers: TimelineSubscriber[] = [];
+  private _nativeFPS = 30;
 
   setDuration(duration: number) {
     this._duration = Math.max(this._duration, duration);
@@ -18,6 +19,10 @@ export class Timeline {
 
   subscribe(cb: TimelineSubscriber) {
     this._subscribers.push(cb);
+
+    // 🔑 immediately sync subscriber
+    cb(this._currentTime, undefined);
+
     return () => {
       this._subscribers = this._subscribers.filter(s => s !== cb);
     };
@@ -32,8 +37,18 @@ export class Timeline {
     this.notify(Math.max(0, Math.min(time, this._duration)));
   }
 
-  stepFrames(frames: number, nativeFPS = 30) {
-    this.seek(this._currentTime + frames / nativeFPS);
+  get nativeFPS() {
+    return this._nativeFPS;
+  }
+
+  setNativeFPS(fps: number) {
+    if (fps > 0 && isFinite(fps)) {
+      this._nativeFPS = fps;
+    }
+  }
+
+  stepFrames(frames: number) {
+    this.seek(this._currentTime + frames / this._nativeFPS);
   }
 
   play() {

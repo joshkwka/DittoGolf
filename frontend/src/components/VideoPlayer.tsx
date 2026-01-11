@@ -85,7 +85,13 @@ const VideoPlayer = forwardRef<HTMLVideoElement, VideoPlayerProps>(
         }
 
         // Handle play/pause/rate actions
-        if (action === "play") video.play();
+        if (action === "play") {
+          const p = video.play();
+          if (p && typeof p.catch === "function") {
+            p.catch(() => {});
+          }
+        }
+
         if (action === "pause") video.pause();
         if (action === "rate") video.playbackRate = timeline.playbackRate;
       };
