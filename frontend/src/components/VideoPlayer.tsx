@@ -9,32 +9,26 @@ type VideoPlayerProps = {
 export default function VideoPlayer({ src, timeline }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  // Register duration with timeline
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
-    const onLoaded = () => {
+    // Register duration
+    const handleLoaded = () => {
       timeline.setDuration(Math.max(timeline.duration, video.duration));
     };
 
-    video.addEventListener("loadedmetadata", onLoaded);
-    return () => video.removeEventListener("loadedmetadata", onLoaded);
+    video.addEventListener("loadedmetadata", handleLoaded);
+    return () => video.removeEventListener("loadedmetadata", handleLoaded);
   }, [timeline]);
 
-  // Subscribe to timeline
   useEffect(() => {
-    const callback = (time: number, action?: "play" | "pause") => {
+    const callback = (time: number) => {
       const video = videoRef.current;
       if (!video) return;
 
-      // Sync time only if needed (prevents jitter)
-      if (Math.abs(video.currentTime - time) > 0.03) {
-        video.currentTime = Math.min(time, video.duration);
-      }
-
-      if (action === "play") video.play();
-      if (action === "pause") video.pause();
+      // Set video to exact frame
+      video.currentTime = Math.min(time, video.duration);
     };
 
     timeline.subscribe(callback);
@@ -48,6 +42,7 @@ export default function VideoPlayer({ src, timeline }: VideoPlayerProps) {
       muted
       playsInline
       controls={false}
+      style={{ background: "#000", borderRadius: 8 }}
     />
   );
 }
