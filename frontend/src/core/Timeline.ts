@@ -12,17 +12,9 @@ export class Timeline {
     this._duration = Math.max(this._duration, duration);
   }
 
-  setPlaybackRate(rate: number) {
-    this._playbackRate = rate;
-    this.notify(this._currentTime, "rate");
-  }
-
   subscribe(cb: TimelineSubscriber) {
     this._subscribers.push(cb);
-
-    // 🔑 immediately sync subscriber
-    cb(this._currentTime, undefined);
-
+    cb(this._currentTime);
     return () => {
       this._subscribers = this._subscribers.filter(s => s !== cb);
     };
@@ -37,16 +29,6 @@ export class Timeline {
     this.notify(Math.max(0, Math.min(time, this._duration)));
   }
 
-  get nativeFPS() {
-    return this._nativeFPS;
-  }
-
-  setNativeFPS(fps: number) {
-    if (fps > 0 && isFinite(fps)) {
-      this._nativeFPS = fps;
-    }
-  }
-
   stepFrames(frames: number) {
     this.seek(this._currentTime + frames / this._nativeFPS);
   }
@@ -59,6 +41,11 @@ export class Timeline {
     this.notify(this._currentTime, "pause");
   }
 
+  setPlaybackRate(rate: number) {
+    this._playbackRate = rate;
+    this.notify(this._currentTime, "rate");
+  }
+
   get currentTime() {
     return this._currentTime;
   }
@@ -69,5 +56,9 @@ export class Timeline {
 
   get playbackRate() {
     return this._playbackRate;
+  }
+
+  get nativeFPS() {
+    return this._nativeFPS;
   }
 }
