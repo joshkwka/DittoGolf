@@ -21,7 +21,7 @@ const VideoPlayer = forwardRef<HTMLVideoElement, VideoPlayerProps>(
       }
     }, [forwardedRef]);
 
-    // Duration
+    // On load, set timeline duration (max of video.duration and timeline.duration)
     useEffect(() => {
       const video = videoRef.current;
       if (!video) return;
@@ -31,6 +31,8 @@ const VideoPlayer = forwardRef<HTMLVideoElement, VideoPlayerProps>(
       return () => video.removeEventListener("loadedmetadata", onLoaded);
     }, [timeline]);
 
+    // This is currently an issue, because if FOLLOWER.duration > MASTER.duration, 
+      // it will hit a dead-end once MASTER playback completes
     // MASTER drives timeline time
     useEffect(() => {
       if (!notifyTimeline) return;
@@ -62,6 +64,7 @@ const VideoPlayer = forwardRef<HTMLVideoElement, VideoPlayerProps>(
           video.currentTime = time;
         }
 
+        // If play is clicked, notify Timeline to play
         if (action === "play") video.play().catch(() => {});
         if (action === "pause") video.pause();
         if (action === "rate") video.playbackRate = timeline.playbackRate;

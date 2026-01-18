@@ -20,6 +20,7 @@ export default function DualVideoPlayer({ video1Src, video2Src }: DualVideoPlaye
 
   return (
     <div>
+      {/* Video Players for each video -- notifyTimeline == True for the master video only (index 0) */}
       <div style={{ display: "flex", gap: 10 }}>
         {[video1Src, video2Src].map((src, i) => (
           <VideoPlayer
@@ -34,6 +35,7 @@ export default function DualVideoPlayer({ video1Src, video2Src }: DualVideoPlaye
         ))}
       </div>
 
+      {/* Timeline controls via seek bar */} 
       <input
         type="range"
         min={0}
@@ -45,11 +47,12 @@ export default function DualVideoPlayer({ video1Src, video2Src }: DualVideoPlaye
         style={{ width: "100%", marginTop: 10 }}
       />
 
+      {/* Discrete frame stepping */}
       <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
         <button onClick={() => timeline.stepFrames(-1)}>◀</button>
         <button onClick={() => timeline.stepFrames(1)}>▶</button>
 
-
+        {/* Playback rate selector */}
         <label>
           <select
             value={timeline.playbackRate}
