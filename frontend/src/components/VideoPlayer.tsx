@@ -4,14 +4,13 @@ import { Timeline } from "../core/Timeline";
 type VideoPlayerProps = {
   src: string;
   timeline: Timeline;
-  notifyTimeline?: boolean;
 };
 
 const VideoPlayer = forwardRef<HTMLVideoElement, VideoPlayerProps>(
-  ({ src, timeline, notifyTimeline = true }, forwardedRef) => {
+  ({ src, timeline }, forwardedRef) => {
     const videoRef = useRef<HTMLVideoElement>(null);
 
-    // Expose video ref
+    // Sync the ref with the forwardedRef from parent
     useEffect(() => {
       if (!forwardedRef) return;
       if (typeof forwardedRef === "function") {
@@ -21,7 +20,7 @@ const VideoPlayer = forwardRef<HTMLVideoElement, VideoPlayerProps>(
       }
     }, [forwardedRef]);
 
-    // On load, set timeline duration (max of video.duration and timeline.duration)
+    // Metadata: Tell timeline how long this video is
     useEffect(() => {
       const video = videoRef.current;
       if (!video) return;
@@ -31,52 +30,63 @@ const VideoPlayer = forwardRef<HTMLVideoElement, VideoPlayerProps>(
       return () => video.removeEventListener("loadedmetadata", onLoaded);
     }, [timeline]);
 
-    // This is currently an issue, because if FOLLOWER.duration > MASTER.duration, 
-      // it will hit a dead-end once MASTER playback completes
-    // MASTER drives timeline time
-    useEffect(() => {
-      if (!notifyTimeline) return;
-      const video = videoRef.current;
-      if (!video) return;
-
-      const onTimeUpdate = () => {
-        timeline.notify(video.currentTime);
-      };
-
-      video.addEventListener("timeupdate", onTimeUpdate);
-      return () => video.removeEventListener("timeupdate", onTimeUpdate);
-    }, [timeline, notifyTimeline]);
-
-    // FOLLOW timeline
+    // THE ENGINE: Follow the virtual clock
     useEffect(() => {
       const video = videoRef.current;
       if (!video) return;
 
-      // Immediately sync video with timeline
-      video.currentTime = timeline.currentTime;
-      video.playbackRate = timeline.playbackRate;
-
-      const unsub = timeline.subscribe((time, action) => {
+      const unsub = timeline.subscribe((step, action) => {
         const video = videoRef.current;
         if (!video) return;
 
-        if (Math.abs(video.currentTime - time) > 0.01) {
-          video.currentTime = time;
+        const targetTime = step / timeline.masterFPS;
+
+        // 1. Handle Native Playback State & Rate
+        // Set the hardware rate immediately so the browser's engine 
+        // can handle the frame interpolation smoothly.
+        if (action === "play") {
+          video.playbackRate = timeline.playbackRate;
+          video.play().catch(() => {});
+        }
+        if (action === "pause") {
+          video.pause();
+        }
+        if (action === "rate") {
+          video.playbackRate = timeline.playbackRate;
         }
 
-        // If play is clicked, notify Timeline to play
-        if (action === "play") video.play().catch(() => {});
-        if (action === "pause") video.pause();
-        if (action === "rate") video.playbackRate = timeline.playbackRate;
+        // 2. Handle Synchronization Logic
+        const drift = Math.abs(video.currentTime - targetTime);
+        const baseFrameDuration = 1 / timeline.masterFPS;
+
+        /**
+         * DYNAMIC THRESHOLD LOGIC:
+         * At 1x speed, we snap if we are > 2 frames off.
+         * At 4x speed, we allow up to 8 frames of drift (2 * 4) before snapping.
+         * This prevents "stutter" caused by constant seek commands at high speeds.
+         */
+        const dynamicThreshold = baseFrameDuration * 2 * Math.max(1, timeline.playbackRate);
+
+        const isSeeking = action === "seek";
+        const isWayOff = drift > dynamicThreshold;
+
+        // Snap to target time if user manually scrubbed OR if natural drift 
+        // exceeded our dynamic threshold.
+        if (isSeeking || (action === undefined && isWayOff)) {
+          video.currentTime = targetTime;
+        }
       });
 
       return unsub;
     }, [timeline]);
 
-    // Apply rate immediately
+    // Initial and Rate Setup
     useEffect(() => {
       const video = videoRef.current;
-      if (video) video.playbackRate = timeline.playbackRate;
+      if (video) {
+        video.playbackRate = timeline.playbackRate;
+        video.currentTime = timeline.currentStep / timeline.masterFPS;
+      }
     }, [timeline.playbackRate]);
 
     return (

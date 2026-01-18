@@ -11,16 +11,18 @@ type DualVideoPlayerProps = {
 
 export default function DualVideoPlayer({ video1Src, video2Src }: DualVideoPlayerProps) {
   const [timeline] = useState(() => new Timeline());
+  
+  // Force a re-render whenever the timeline "ticks" so the slider moves
   const [, forceRender] = useState(0);
   const videoRefs = useRef<HTMLVideoElement[]>([]);
 
   useEffect(() => {
+    // Subscribe to the heartbeat of the timeline
     return timeline.subscribe(() => forceRender(v => v + 1));
   }, [timeline]);
 
   return (
     <div>
-      {/* Video Players for each video -- notifyTimeline == True for the master video only (index 0) */}
       <div style={{ display: "flex", gap: 10 }}>
         {[video1Src, video2Src].map((src, i) => (
           <VideoPlayer
@@ -30,29 +32,31 @@ export default function DualVideoPlayer({ video1Src, video2Src }: DualVideoPlaye
             ref={el => {
               if (el) videoRefs.current[i] = el;
             }}
-            notifyTimeline={i === 0}
           />
         ))}
       </div>
 
-      {/* Timeline controls via seek bar */} 
+      {/* SLIDER LOGIC:
+          - max is the total number of integer steps.
+          - step is 1, ensuring we hit every single frame.
+      */}
       <input
         type="range"
         min={0}
-        max={timeline.duration}
-        step={1 / timeline.nativeFPS}
-        value={timeline.currentTime}
+        max={timeline.totalSteps}
+        step={1}
+        value={timeline.currentStep}
         onChange={e => timeline.seek(Number(e.target.value))}
-        disabled={!videoRefs.current[0]?.duration}
+        // Disable if we haven't calculated a duration yet
+        disabled={timeline.totalSteps === 0}
         style={{ width: "100%", marginTop: 10 }}
       />
 
-      {/* Discrete frame stepping */}
       <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+        {/* Step backward/forward by 1 master frame */}
         <button onClick={() => timeline.stepFrames(-1)}>◀</button>
         <button onClick={() => timeline.stepFrames(1)}>▶</button>
 
-        {/* Playback rate selector */}
         <label>
           <select
             value={timeline.playbackRate}
@@ -64,9 +68,14 @@ export default function DualVideoPlayer({ video1Src, video2Src }: DualVideoPlaye
           </select>
         </label>
 
-
         <button onClick={() => timeline.play()}>Play</button>
         <button onClick={() => timeline.pause()}>Pause</button>
+      </div>
+
+      {/* Debug Info: Useful to see the frame math in action */}
+      <div style={{ marginTop: 10, fontSize: 12, color: '#666' }}>
+        Step: {Math.floor(timeline.currentStep)} / {timeline.totalSteps} | 
+        Time: {(timeline.currentStep / timeline.masterFPS).toFixed(2)}s
       </div>
     </div>
   );
