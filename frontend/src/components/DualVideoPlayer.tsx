@@ -9,7 +9,6 @@ const SWING_STAGES = ["Address", "Top", "Downswing", "Impact", "Finish"];
 const MemoizedVideoPlayer = React.memo(VideoPlayer);
 
 // --- Segment Analysis (Memoized) ---
-// Only re-runs when 'dataVersion' changes (add/remove keyframe)
 const SegmentAnalysis = React.memo(({ timeline }: { timeline: Timeline, dataVersion: number }) => {
   const kfsA = timeline.keyframesA;
   const kfsB = timeline.keyframesB;
@@ -52,7 +51,7 @@ const SegmentAnalysis = React.memo(({ timeline }: { timeline: Timeline, dataVers
       })}
     </div>
   );
-}, (prev, next) => prev.dataVersion === next.dataVersion); // It is used here in the comparison check
+}, (prev, next) => prev.dataVersion === next.dataVersion);
 
 
 // --- Video Header (Memoized) ---
@@ -66,31 +65,71 @@ const VideoHeader = React.memo(({ label, onClear, onReplace }: { label: string, 
   </div>
 ));
 
-// --- Calibration Slider (Needs to render on tick for playhead) ---
+// --- Calibration Slider (Updated with Touch Support) ---
 const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 | 1, timeline: Timeline, duration: number }) => {
   const kfs = videoIndex === 0 ? timeline.keyframesA : timeline.keyframesB;
   const totalSteps = duration > 0 ? Math.ceil(duration * 60) : 100;
   const currentVideoTime = timeline.calculateVideoTime(videoIndex, timeline.currentStep);
   const currentVideoStep = currentVideoTime * timeline.masterFPS;
 
-  const handleDragStart = (e: React.MouseEvent, kfId: string, startStep: number) => {
+  // 1. Mouse Event Handler
+  const handleMouseDown = (e: React.MouseEvent, kfId: string, startStep: number) => {
     if (e.button !== 0) return;
     e.stopPropagation(); e.preventDefault();
-    const parent = (e.currentTarget as HTMLElement).parentElement;
+    initiateDrag(e.currentTarget as HTMLElement, e.clientX, kfId, startStep, false);
+  };
+
+  // 2. Touch Event Handler
+  const handleTouchStart = (e: React.TouchEvent, kfId: string, startStep: number) => {
+    e.stopPropagation(); 
+    // We don't preventDefault here or buttons break, we do it on 'move'
+    initiateDrag(e.currentTarget as HTMLElement, e.touches[0].clientX, kfId, startStep, true);
+  };
+
+  // 3. Unified Drag Logic
+  const initiateDrag = (target: HTMLElement, startX: number, kfId: string, startStep: number, isTouch: boolean) => {
+    const parent = target.parentElement;
     if (!parent) return;
     const rect = parent.getBoundingClientRect();
-    const startX = e.clientX;
-    const onMouseMove = (moveEvent: MouseEvent) => {
-      const deltaX = moveEvent.clientX - startX;
+
+    const onMove = (clientX: number) => {
+      const deltaX = clientX - startX;
       const deltaStep = (deltaX / rect.width) * totalSteps;
       timeline.updateKeyframe(videoIndex, kfId, startStep + deltaStep);
     };
-    const onMouseUp = () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); timeline.resetAfterDrag(); };
-    window.addEventListener('mousemove', onMouseMove); window.addEventListener('mouseup', onMouseUp);
+
+    if (isTouch) {
+        // Touch Handlers
+        const onTouchMove = (e: TouchEvent) => {
+            e.preventDefault(); // Stop page scrolling while dragging slider
+            onMove(e.touches[0].clientX);
+        };
+        const onTouchEnd = () => {
+            window.removeEventListener('touchmove', onTouchMove);
+            window.removeEventListener('touchend', onTouchEnd);
+            timeline.resetAfterDrag();
+        };
+        // { passive: false } is required to allow preventDefault()
+        window.addEventListener('touchmove', onTouchMove, { passive: false });
+        window.addEventListener('touchend', onTouchEnd);
+    } else {
+        // Mouse Handlers
+        const onMouseMove = (e: MouseEvent) => {
+            e.preventDefault();
+            onMove(e.clientX);
+        };
+        const onMouseUp = () => {
+            window.removeEventListener('mousemove', onMouseMove);
+            window.removeEventListener('mouseup', onMouseUp);
+            timeline.resetAfterDrag();
+        };
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
+    }
   };
 
   return (
-    <div style={{ position: 'relative', height: '40px', background: '#e5e7eb', borderRadius: '6px', margin: '15px 0', border: '1px solid #d1d5db', overflow: 'hidden', userSelect: 'none' }}>
+    <div style={{ position: 'relative', height: '40px', background: '#e5e7eb', borderRadius: '6px', margin: '15px 0', border: '1px solid #d1d5db', overflow: 'hidden', userSelect: 'none', touchAction: 'none' }}>
       <div style={{ position: 'absolute', inset: 0, opacity: 0.1, backgroundImage: 'linear-gradient(90deg, #000 1px, transparent 1px)', backgroundSize: '20px 100%' }} />
       <div style={{ position: 'absolute', left: `${(currentVideoStep / totalSteps) * 100}%`, top: 0, bottom: 0, width: '2px', backgroundColor: '#ef4444', zIndex: 5, pointerEvents: 'none', boxShadow: '0 0 4px rgba(239, 68, 68, 0.6)' }} />
       {kfs.map(kf => {
@@ -98,7 +137,18 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
         const isEnabled = timeline.keyframesEnabled || isAnchor;
         const leftPct = Math.max(0, Math.min(100, (kf.step / totalSteps) * 100));
         return (
-          <div key={kf.id} onMouseDown={(e) => isEnabled && handleDragStart(e, kf.id, kf.step)} onContextMenu={(e) => { e.preventDefault(); if (isEnabled && !isAnchor) { timeline.deleteGlobalEvent(kf.label); }}} style={{ position: 'absolute', left: `${leftPct}%`, top: '50%', transform: 'translate(-50%, -50%)', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: isEnabled ? 'grab' : 'not-allowed', zIndex: 10 }} title={isAnchor ? kf.label : `${kf.label} (Right-click to delete)`}>
+          <div key={kf.id} 
+            onMouseDown={(e) => isEnabled && handleMouseDown(e, kf.id, kf.step)} 
+            onTouchStart={(e) => isEnabled && handleTouchStart(e, kf.id, kf.step)}
+            onContextMenu={(e) => { e.preventDefault(); if (isEnabled && !isAnchor) { timeline.deleteGlobalEvent(kf.label); }}} 
+            style={{ 
+                position: 'absolute', left: `${leftPct}%`, top: '50%', transform: 'translate(-50%, -50%)', 
+                width: '30px', height: '30px', // Made touch target slightly larger
+                display: 'flex', alignItems: 'center', justifyContent: 'center', 
+                cursor: isEnabled ? 'grab' : 'not-allowed', zIndex: 10 
+            }} 
+            title={isAnchor ? kf.label : `${kf.label} (Right-click to delete)`}
+          >
             <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: isEnabled ? kf.color : '#9ca3af', border: '2px solid white', boxShadow: '0 2px 4px rgba(0,0,0,0.2)', opacity: isEnabled ? 1 : 0.6 }} />
             <div style={{ position: 'absolute', bottom: '100%', marginBottom: '4px', fontSize: '10px', background: 'rgba(0,0,0,0.8)', color: 'white', padding: '2px 4px', borderRadius: '4px', whiteSpace: 'nowrap', pointerEvents: 'none' }}>{kf.label}</div>
           </div>
@@ -120,23 +170,19 @@ export default function DualVideoPlayer({
   const timeline = useMemo(() => new Timeline(), []);
   const [isSettingsOpen, setSettingsOpen] = useState(false);
   
-  // OPTIMIZATION 2: Split "Playback Tick" from "Data Update"
-  const [, setUiTick] = useState(0);        // Updates 30fps (for scrubber)
-  const [dataVersion, setDataVersion] = useState(0); // Updates only on keyframe changes
+  const [, setUiTick] = useState(0);       
+  const [dataVersion, setDataVersion] = useState(0); 
 
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([null, null]);
   const frameSkipRef = useRef(0);
   
   useEffect(() => {
     const unsubscribe = timeline.subscribe((_, action) => {
-        // A. Heavy Updates (Keyframes changed, buttons clicked) -> Full Render
         if (action === "update" || action === "play" || action === "pause" || action === "rate") {
-            setDataVersion(v => v + 1); // Trigger SegmentAnalysis update
-            setUiTick(t => t + 1);      // Trigger Scrubber update
+            setDataVersion(v => v + 1); 
+            setUiTick(t => t + 1);      
             return;
         }
-
-        // B. Playback Loop -> Throttle -> Light Render (Scrubber only)
         frameSkipRef.current++;
         if (frameSkipRef.current % 2 === 0) {
             setUiTick(t => t + 1);
@@ -148,7 +194,6 @@ export default function DualVideoPlayer({
   const handleAddEvent = (label: string) => {
       if(!label) return;
       timeline.addGlobalEvent(label);
-      // No need to force render, the "update" event from timeline does it
   }
 
   // Keyboard Shortcuts
@@ -165,7 +210,6 @@ export default function DualVideoPlayer({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [timeline]);
 
-  // Stable Handlers for child components
   const handleClear1 = useCallback(() => onClearVideo(1), [onClearVideo]);
   const handleReplace1 = useCallback(() => onReplaceVideo(1), [onReplaceVideo]);
   const handleClear2 = useCallback(() => onClearVideo(2), [onClearVideo]);
@@ -194,7 +238,6 @@ export default function DualVideoPlayer({
             <div>
                 <VideoHeader label="Reference Video (Left)" onClear={handleClear1} onReplace={handleReplace1} />
                 <div style={{ height: '60vh', minHeight: '400px', width: '100%', background: '#111', borderRadius: '8px', overflow: 'hidden' }}>
-                    {/* OPTIMIZATION 3: Use Memoized Video Player */}
                     <MemoizedVideoPlayer src={video1Src} timeline={timeline} videoIndex={0} ref={(el) => { videoRefs.current[0] = el; }} />
                 </div>
             </div>
@@ -243,12 +286,10 @@ export default function DualVideoPlayer({
           {[0, 1].map((idx) => (
             <div key={idx} style={{ marginBottom: '20px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}><span style={{ fontWeight: 600, fontSize: '14px' }}>Video {idx + 1} Markers</span></div>
-              {/* Calibration Slider receives 'onForceRender' purely for keyframe deletion triggering */}
               <CalibrationSlider videoIndex={idx as 0 | 1} timeline={timeline} duration={videoRefs.current[idx]?.duration || 0} />
             </div>
           ))}
           {timeline.keyframesEnabled && (<div style={{ marginTop: '20px' }}><div style={{ fontSize: '12px', fontWeight: 'bold', marginBottom: '5px', color: '#666' }}>Relative Speed (Video 2 to Video 1)</div>
-            {/* OPTIMIZATION 4: Pass dataVersion so it knows when to re-calc */}
             <SegmentAnalysis timeline={timeline} dataVersion={dataVersion} />
           </div>)}
         </div>
