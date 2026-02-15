@@ -64,21 +64,32 @@ const SegmentAnalysis = React.memo(({ timeline }: { timeline: Timeline, dataVers
   );
 }, (prev, next) => prev.dataVersion === next.dataVersion);
 
-// --- 2. OPTIMIZED SLIDER (Restored DOM Traversal Logic) ---
+// --- 2. OPTIMIZED SLIDER (Self-Updating) ---
 const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 | 1, timeline: Timeline, duration: number }) => {
   const kfs = videoIndex === 0 ? timeline.keyframesA : timeline.keyframesB;
   const totalSteps = duration > 0 ? Math.ceil(duration * 60) : 100;
   
   const playheadRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  // Update Red Playhead Position (Direct DOM)
+  // FORCE RENDER: Local state to force React to update when keys move
+  const [, setTick] = useState(0);
+
+  // 1. Subscribe to Timeline Updates
   useEffect(() => {
     const unsub = timeline.subscribe((step, action) => {
+        // A. Handle Red Playhead (No React Render needed, direct DOM)
         if (playheadRef.current && (action === undefined || action === 'seek' || action === 'play')) {
              const currentTime = timeline.calculateVideoTime(videoIndex, step);
              const currentStep = currentTime * timeline.masterFPS;
              const pct = (currentStep / totalSteps) * 100;
              playheadRef.current.style.left = `${pct}%`;
+        }
+
+        // B. Handle Keyframe Moves (Force React Re-render)
+        // When we drag ("update") or delete/add events, we must re-draw the dots.
+        if (action === "update") {
+            setTick(t => t + 1);
         }
     });
     return unsub;
@@ -87,15 +98,11 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
   // --- MOUSE HANDLER ---
   const handleMouseDown = (e: React.MouseEvent, kfId: string, startStep: number) => {
     if (e.button !== 0) return;
-    e.preventDefault();
-    e.stopPropagation();
+    e.preventDefault(); e.stopPropagation();
 
-    // 1. Get Parent Element directly (Stateless & Robust)
-    const target = e.currentTarget as HTMLElement;
-    const parent = target.parentElement;
-    if (!parent) return;
-
-    const rect = parent.getBoundingClientRect();
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
     const startX = e.clientX;
 
     const onMouseMove = (evt: MouseEvent) => {
@@ -118,21 +125,14 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
   // --- TOUCH HANDLER ---
   const handleTouchStart = (e: React.TouchEvent, kfId: string, startStep: number) => {
     e.stopPropagation();
-    // Note: We do NOT preventDefault here to allow 'click' events (like context menu) to potentially fire.
-    // We prevent scrolling in the 'touchmove' listener instead.
 
-    // 1. Get Parent Element directly
-    const target = e.currentTarget as HTMLElement;
-    const parent = target.parentElement;
-    if (!parent) return;
-
-    const rect = parent.getBoundingClientRect();
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
     const startX = e.touches[0].clientX;
 
     const onTouchMove = (evt: TouchEvent) => {
-      // 2. STOP SCROLLING
-      if (evt.cancelable) evt.preventDefault(); 
-      
+      if (evt.cancelable) evt.preventDefault(); // Stop Scroll
       const deltaX = evt.touches[0].clientX - startX;
       const deltaStep = (deltaX / rect.width) * totalSteps;
       timeline.updateKeyframe(videoIndex, kfId, startStep + deltaStep);
@@ -144,13 +144,13 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
       timeline.resetAfterDrag();
     };
 
-    // 3. Attach Passive: False listener to allow preventing scroll
     window.addEventListener('touchmove', onTouchMove, { passive: false });
     window.addEventListener('touchend', onTouchEnd);
   };
 
   return (
     <div 
+        ref={containerRef} // Important for width calc
         style={{ 
             position: 'relative', height: '40px', 
             background: '#e5e7eb', borderRadius: '6px', margin: '15px 0', 
@@ -173,8 +173,7 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
             onContextMenu={(e) => { e.preventDefault(); if (isEnabled && !isAnchor) { timeline.deleteGlobalEvent(kf.label); }}} 
             style={{ 
                 position: 'absolute', left: `${leftPct}%`, top: '50%', transform: 'translate(-50%, -50%)', 
-                // Increased touch target to 44px (Standard Minimum)
-                width: '44px', height: '44px', 
+                width: '44px', height: '44px', // Touch Friendly
                 display: 'flex', alignItems: 'center', justifyContent: 'center', 
                 cursor: isEnabled ? 'grab' : 'not-allowed', zIndex: 10,
                 touchAction: 'none' 
