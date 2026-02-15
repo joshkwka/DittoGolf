@@ -64,8 +64,8 @@ const SegmentAnalysis = React.memo(({ timeline }: { timeline: Timeline, dataVers
   );
 }, (prev, next) => prev.dataVersion === next.dataVersion);
 
-// --- 2. OPTIMIZED SLIDER (With Live Drag Feedback) ---
-const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 | 1, timeline: Timeline, duration: number }) => {
+// --- 2. OPTIMIZED SLIDER (With Direct Video Preview) ---
+const CalibrationSlider = ({ videoIndex, timeline, duration, videoRef }: { videoIndex: 0 | 1, timeline: Timeline, duration: number, videoRef: HTMLVideoElement | null }) => {
   const kfs = videoIndex === 0 ? timeline.keyframesA : timeline.keyframesB;
   const totalSteps = duration > 0 ? Math.ceil(duration * 60) : 100;
   
@@ -75,17 +75,15 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
   // FORCE RENDER: Local state to update UI when dragging dots
   const [, setTick] = useState(0);
 
-  // 1. Subscribe to Timeline Updates (Playback & External Changes)
+  // 1. Subscribe to Timeline Updates
   useEffect(() => {
     const unsub = timeline.subscribe((step, action) => {
-        // A. Handle Red Playhead (Direct DOM)
         if (playheadRef.current && (action === undefined || action === 'seek' || action === 'play')) {
              const currentTime = timeline.calculateVideoTime(videoIndex, step);
              const currentStep = currentTime * timeline.masterFPS;
              const pct = (currentStep / totalSteps) * 100;
              playheadRef.current.style.left = `${pct}%`;
         }
-        // B. Handle External Updates (e.g., Undo/Redo or delete)
         if (action === "update") {
             setTick(t => t + 1);
         }
@@ -93,68 +91,68 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
     return unsub;
   }, [timeline, totalSteps, videoIndex]);
 
-  // --- MOUSE HANDLER ---
-  const handleMouseDown = (e: React.MouseEvent, kfId: string, startStep: number) => {
-    if (e.button !== 0) return;
-    e.preventDefault(); e.stopPropagation();
-
-    const container = containerRef.current;
-    if (!container) return;
-    const rect = container.getBoundingClientRect();
-    const startX = e.clientX;
-
-    const onMouseMove = (evt: MouseEvent) => {
-      evt.preventDefault();
-      const deltaX = evt.clientX - startX;
-      const deltaStep = (deltaX / rect.width) * totalSteps;
-      
-      // Update Data
-      timeline.updateKeyframe(videoIndex, kfId, startStep + deltaStep);
-      
-      // FIX: Force React to re-render immediately so we see the dot move
-      setTick(t => t + 1);
-    };
-
-    const onMouseUp = () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-      timeline.resetAfterDrag();
-    };
-
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
-  };
-
-  // --- TOUCH HANDLER ---
-  const handleTouchStart = (e: React.TouchEvent, kfId: string, startStep: number) => {
+  // --- UNIFIED DRAG HANDLER (Mouse + Touch) ---
+  const handleDragStart = (e: React.MouseEvent | React.TouchEvent, kfId: string, startStep: number) => {
+    if ('button' in e && e.button !== 0) return;
+    
+    // We don't preventDefault here to allow clicks, but we stop propagation
     e.stopPropagation();
 
     const container = containerRef.current;
     if (!container) return;
+    
+    // Get start X
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const rect = container.getBoundingClientRect();
-    const startX = e.touches[0].clientX;
+    const startX = clientX;
 
-    const onTouchMove = (evt: TouchEvent) => {
-      if (evt.cancelable) evt.preventDefault(); // Stop Scroll
-      
-      const deltaX = evt.touches[0].clientX - startX;
+    const onMove = (cx: number) => {
+      const deltaX = cx - startX;
       const deltaStep = (deltaX / rect.width) * totalSteps;
+      const newStep = startStep + deltaStep;
       
-      // Update Data
-      timeline.updateKeyframe(videoIndex, kfId, startStep + deltaStep);
-
-      // FIX: Force React to re-render immediately
+      // 1. Update Data
+      timeline.updateKeyframe(videoIndex, kfId, newStep);
+      
+      // 2. Force React Render (moves the dot)
       setTick(t => t + 1);
+
+      // 3. CRITICAL FIX: Force Video Preview (Direct DOM)
+      if (videoRef) {
+          // Pause if playing so we don't fight the loop
+          if (!videoRef.paused) videoRef.pause();
+          // Set time directly to match the dragged keyframe
+          videoRef.currentTime = newStep / timeline.masterFPS;
+      }
     };
 
-    const onTouchEnd = () => {
-      window.removeEventListener('touchmove', onTouchMove);
-      window.removeEventListener('touchend', onTouchEnd);
-      timeline.resetAfterDrag();
-    };
-
-    window.addEventListener('touchmove', onTouchMove, { passive: false });
-    window.addEventListener('touchend', onTouchEnd);
+    if ('touches' in e) {
+        // Touch
+        const onTouchMove = (evt: TouchEvent) => {
+            if (evt.cancelable) evt.preventDefault(); // Stop Scroll
+            onMove(evt.touches[0].clientX);
+        };
+        const onTouchEnd = () => {
+            window.removeEventListener('touchmove', onTouchMove);
+            window.removeEventListener('touchend', onTouchEnd);
+            timeline.resetAfterDrag();
+        };
+        window.addEventListener('touchmove', onTouchMove, { passive: false });
+        window.addEventListener('touchend', onTouchEnd);
+    } else {
+        // Mouse
+        const onMouseMove = (evt: MouseEvent) => {
+            evt.preventDefault();
+            onMove(evt.clientX);
+        };
+        const onMouseUp = () => {
+            window.removeEventListener('mousemove', onMouseMove);
+            window.removeEventListener('mouseup', onMouseUp);
+            timeline.resetAfterDrag();
+        };
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
+    }
   };
 
   return (
@@ -169,7 +167,6 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
         }}
     >
       <div style={{ position: 'absolute', inset: 0, opacity: 0.1, backgroundImage: 'linear-gradient(90deg, #000 1px, transparent 1px)', backgroundSize: '20px 100%' }} />
-      {/* DIRECT DOM PLAYHEAD */}
       <div ref={playheadRef} style={{ position: 'absolute', left: '0%', top: 0, bottom: 0, width: '2px', backgroundColor: '#ef4444', zIndex: 5, pointerEvents: 'none', boxShadow: '0 0 4px rgba(239, 68, 68, 0.6)' }} />
       {kfs.map(kf => {
         const isAnchor = kf.label === 'Start' || kf.label === 'End';
@@ -177,12 +174,12 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
         const leftPct = Math.max(0, Math.min(100, (kf.step / totalSteps) * 100));
         return (
           <div key={kf.id} 
-            onMouseDown={(e) => isEnabled && handleMouseDown(e, kf.id, kf.step)} 
-            onTouchStart={(e) => isEnabled && handleTouchStart(e, kf.id, kf.step)}
+            onMouseDown={(e) => isEnabled && handleDragStart(e, kf.id, kf.step)} 
+            onTouchStart={(e) => isEnabled && handleDragStart(e, kf.id, kf.step)}
             onContextMenu={(e) => { e.preventDefault(); if (isEnabled && !isAnchor) { timeline.deleteGlobalEvent(kf.label); }}} 
             style={{ 
                 position: 'absolute', left: `${leftPct}%`, top: '50%', transform: 'translate(-50%, -50%)', 
-                width: '44px', height: '44px', // Touch Friendly
+                width: '44px', height: '44px', 
                 display: 'flex', alignItems: 'center', justifyContent: 'center', 
                 cursor: isEnabled ? 'grab' : 'not-allowed', zIndex: 10,
                 touchAction: 'none' 
@@ -198,16 +195,14 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
   );
 };
 
-// --- 3. OPTIMIZED SCRUBBER (Self-Contained) ---
+// --- 3. OPTIMIZED SCRUBBER ---
 const Scrubber = ({ timeline }: { timeline: Timeline }) => {
     const inputRef = useRef<HTMLInputElement>(null);
     const timeRef = useRef<HTMLSpanElement>(null);
     const frameRef = useRef(0);
 
-    // Direct DOM update loop
     useEffect(() => {
         const unsub = timeline.subscribe((step) => {
-            // Throttle to every 2nd frame (30fps) for UI
             frameRef.current++;
             if (frameRef.current % 2 !== 0) return;
 
@@ -230,7 +225,7 @@ const Scrubber = ({ timeline }: { timeline: Timeline }) => {
                 min={0} 
                 max={timeline.totalSteps} 
                 step={1} 
-                defaultValue={0} // Uncontrolled
+                defaultValue={0} 
                 onChange={e => timeline.seek(Number(e.target.value))} 
                 style={{ width: "100%", cursor: "pointer", accentColor: "#ef4444" }} 
             />
@@ -314,7 +309,7 @@ export default function DualVideoPlayer({
             <p style={{ margin: 0, fontSize: '14px', color: '#6b7280' }}>{timeline.syncMode === SyncMode.SYNC ? "Synced Mode Active" : "Linear Playback"}</p>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
-            {/* NEW: Toggle Layout Button */}
+            {/* Toggle Layout Button */}
             <button 
                 onClick={() => setLayoutMode(prev => prev === 'row' ? 'col' : 'row')}
                 style={btnStyle}
@@ -378,7 +373,13 @@ export default function DualVideoPlayer({
           {[0, 1].map((idx) => (
             <div key={idx} style={{ marginBottom: '20px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}><span style={{ fontWeight: 600, fontSize: '14px' }}>Video {idx + 1} Markers</span></div>
-              <CalibrationSlider videoIndex={idx as 0 | 1} timeline={timeline} duration={videoRefs.current[idx]?.duration || 0} />
+              {/* IMPORTANT: Pass the videoRef to enable instant preview */}
+              <CalibrationSlider 
+                  videoIndex={idx as 0 | 1} 
+                  timeline={timeline} 
+                  duration={videoRefs.current[idx]?.duration || 0}
+                  videoRef={videoRefs.current[idx]} 
+              />
             </div>
           ))}
           {timeline.keyframesEnabled && (<div style={{ marginTop: '20px' }}><div style={{ fontSize: '12px', fontWeight: 'bold', marginBottom: '5px', color: '#666' }}>Relative Speed (Video 2 to Video 1)</div>
