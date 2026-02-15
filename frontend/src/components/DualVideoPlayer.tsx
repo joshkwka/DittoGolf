@@ -64,7 +64,7 @@ const SegmentAnalysis = React.memo(({ timeline }: { timeline: Timeline, dataVers
   );
 }, (prev, next) => prev.dataVersion === next.dataVersion);
 
-// --- 2. OPTIMIZED SLIDER (Pointer Events for robust mobile support) ---
+// --- 2. OPTIMIZED SLIDER (Restored Dual-Listener Logic) ---
 const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 | 1, timeline: Timeline, duration: number }) => {
   const kfs = videoIndex === 0 ? timeline.keyframesA : timeline.keyframesB;
   const totalSteps = duration > 0 ? Math.ceil(duration * 60) : 100;
@@ -85,44 +85,63 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
     return unsub;
   }, [timeline, totalSteps, videoIndex]);
 
-  // Unified Pointer Handler (Works for Mouse AND Touch)
-  const handlePointerDown = (e: React.PointerEvent, kfId: string, startStep: number) => {
-    // Only primary button (left click or single touch)
-    if (!e.isPrimary) return;
-    
+  // --- MOUSE HANDLER (Desktop) ---
+  const handleMouseDown = (e: React.MouseEvent, kfId: string, startStep: number) => {
+    if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
-    
-    // Capture pointer so we keep receiving events even if you drag outside the div
-    const target = e.currentTarget as HTMLElement;
-    target.setPointerCapture(e.pointerId);
 
     const container = containerRef.current;
     if (!container) return;
-
     const rect = container.getBoundingClientRect();
     const startX = e.clientX;
 
-    const onPointerMove = (evt: PointerEvent) => {
-       if (evt.pointerId !== e.pointerId) return;
-       evt.preventDefault();
-       
-       const deltaX = evt.clientX - startX;
-       const deltaStep = (deltaX / rect.width) * totalSteps;
-       timeline.updateKeyframe(videoIndex, kfId, startStep + deltaStep);
+    const onMouseMove = (evt: MouseEvent) => {
+      evt.preventDefault();
+      const deltaX = evt.clientX - startX;
+      const deltaStep = (deltaX / rect.width) * totalSteps;
+      timeline.updateKeyframe(videoIndex, kfId, startStep + deltaStep);
     };
 
-    const onPointerUp = (evt: PointerEvent) => {
-       if (evt.pointerId !== e.pointerId) return;
-       
-       target.releasePointerCapture(evt.pointerId);
-       window.removeEventListener('pointermove', onPointerMove);
-       window.removeEventListener('pointerup', onPointerUp);
-       timeline.resetAfterDrag();
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      timeline.resetAfterDrag();
     };
 
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  };
+
+  // --- TOUCH HANDLER (Mobile - Critical Fix) ---
+  const handleTouchStart = (e: React.TouchEvent, kfId: string, startStep: number) => {
+    e.stopPropagation();
+    // Do NOT preventDefault here, or 'click' events (like selecting) might break.
+    // We preventDefault inside the 'move' listener instead.
+
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const startX = e.touches[0].clientX;
+
+    const onTouchMove = (evt: TouchEvent) => {
+      // CRITICAL: This stops the page from scrolling while you drag
+      if (evt.cancelable) evt.preventDefault(); 
+      
+      const deltaX = evt.touches[0].clientX - startX;
+      const deltaStep = (deltaX / rect.width) * totalSteps;
+      timeline.updateKeyframe(videoIndex, kfId, startStep + deltaStep);
+    };
+
+    const onTouchEnd = () => {
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', onTouchEnd);
+      timeline.resetAfterDrag();
+    };
+
+    // { passive: false } allows us to call preventDefault()
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
+    window.addEventListener('touchend', onTouchEnd);
   };
 
   return (
@@ -133,8 +152,7 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
             background: '#e5e7eb', borderRadius: '6px', margin: '15px 0', 
             border: '1px solid #d1d5db', overflow: 'hidden', 
             userSelect: 'none', 
-            // CRITICAL: Tells browser "Hands off, I'm handling gestures here"
-            touchAction: 'none' 
+            touchAction: 'none' // CSS backup
         }}
     >
       <div style={{ position: 'absolute', inset: 0, opacity: 0.1, backgroundImage: 'linear-gradient(90deg, #000 1px, transparent 1px)', backgroundSize: '20px 100%' }} />
@@ -146,15 +164,16 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
         const leftPct = Math.max(0, Math.min(100, (kf.step / totalSteps) * 100));
         return (
           <div key={kf.id} 
-            // Pointer Events replace both Mouse and Touch events
-            onPointerDown={(e) => isEnabled && handlePointerDown(e, kf.id, kf.step)} 
+            // Explicitly attach both handlers
+            onMouseDown={(e) => isEnabled && handleMouseDown(e, kf.id, kf.step)} 
+            onTouchStart={(e) => isEnabled && handleTouchStart(e, kf.id, kf.step)}
             onContextMenu={(e) => { e.preventDefault(); if (isEnabled && !isAnchor) { timeline.deleteGlobalEvent(kf.label); }}} 
             style={{ 
                 position: 'absolute', left: `${leftPct}%`, top: '50%', transform: 'translate(-50%, -50%)', 
                 width: '40px', height: '40px', // Larger touch target
                 display: 'flex', alignItems: 'center', justifyContent: 'center', 
                 cursor: isEnabled ? 'grab' : 'not-allowed', zIndex: 10,
-                touchAction: 'none' // Double insurance
+                touchAction: 'none' 
             }} 
             title={isAnchor ? kf.label : `${kf.label} (Right-click to delete)`}
           >
