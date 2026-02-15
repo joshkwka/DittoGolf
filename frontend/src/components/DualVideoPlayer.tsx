@@ -258,12 +258,18 @@ export default function DualVideoPlayer({
   const [dataVersion, setDataVersion] = useState(0); 
 
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([null, null]);
-  const isMobile = useIsMobile(); // Use layout hook
+  const isMobile = useIsMobile();
+  
+  // NEW: State to control layout mode (defaulting to column on mobile)
+  const [layoutMode, setLayoutMode] = useState<'row' | 'col'>('col');
+
+  // Sync initial layout with device type
+  useEffect(() => {
+      setLayoutMode(isMobile ? 'col' : 'row');
+  }, [isMobile]);
   
   useEffect(() => {
     const unsubscribe = timeline.subscribe((_, action) => {
-        // ONLY update React State when structure changes (buttons, markers)
-        // NOT during playback.
         if (action === "update" || action === "rate") {
             setDataVersion(v => v + 1); 
         }
@@ -307,12 +313,22 @@ export default function DualVideoPlayer({
             <h1 style={{ fontSize: '24px', fontWeight: '800', margin: 0 }}>Ditto<span style={{color:'#ef4444'}}>.Golf</span></h1>
             <p style={{ margin: 0, fontSize: '14px', color: '#6b7280' }}>{timeline.syncMode === SyncMode.SYNC ? "Synced Mode Active" : "Linear Playback"}</p>
         </div>
-        <button onClick={() => setSettingsOpen(!isSettingsOpen)} style={btnStyle}>{isSettingsOpen ? "Hide Tools" : "🛠 Open Tools"}</button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+            {/* NEW: Toggle Layout Button */}
+            <button 
+                onClick={() => setLayoutMode(prev => prev === 'row' ? 'col' : 'row')}
+                style={btnStyle}
+                title="Switch Layout"
+            >
+                Layout: {layoutMode === 'row' ? "⬍" : "⬌"}
+            </button>
+            <button onClick={() => setSettingsOpen(!isSettingsOpen)} style={btnStyle}>{isSettingsOpen ? "Hide Tools" : "🛠 Open Tools"}</button>
+        </div>
       </div>
 
       {/* Main Video Grid */}
       <div style={{ background: '#000', padding: isMobile ? '10px' : '20px', borderRadius: '16px', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)' }}>
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "20px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: layoutMode === 'col' ? "1fr" : "1fr 1fr", gap: "20px" }}>
             
             {/* Left */}
             <div>
