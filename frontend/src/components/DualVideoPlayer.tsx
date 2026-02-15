@@ -69,9 +69,10 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
   const kfs = videoIndex === 0 ? timeline.keyframesA : timeline.keyframesB;
   const totalSteps = duration > 0 ? Math.ceil(duration * 60) : 100;
   
-  // Use a ref to update the red line directly without re-rendering React
   const playheadRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null); // Ref for the slider container
 
+  // Update Red Playhead Position
   useEffect(() => {
     const unsub = timeline.subscribe((step, action) => {
         if (playheadRef.current && (action === undefined || action === 'seek' || action === 'play')) {
@@ -84,44 +85,62 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
     return unsub;
   }, [timeline, totalSteps, videoIndex]);
 
-  // Unified Drag Logic
-  const handleMouseDown = (e: React.MouseEvent, kfId: string, startStep: number) => {
-    if (e.button !== 0) return;
-    e.stopPropagation(); e.preventDefault();
-    initiateDrag(e.currentTarget as HTMLElement, e.clientX, kfId, startStep, false);
-  };
+  // Unified Drag Handler
+  const handleDragStart = (e: React.MouseEvent | React.TouchEvent, kfId: string, startStep: number) => {
+    // If mouse, ensure left click
+    if ('button' in e && e.button !== 0) return;
+    
+    e.stopPropagation();
+    
+    // Get the initial X position (Mouse or Touch)
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    
+    const container = containerRef.current;
+    if (!container) return;
 
-  const handleTouchStart = (e: React.TouchEvent, kfId: string, startStep: number) => {
-    e.stopPropagation(); 
-    initiateDrag(e.currentTarget as HTMLElement, e.touches[0].clientX, kfId, startStep, true);
-  };
+    const rect = container.getBoundingClientRect();
+    const startX = clientX;
 
-  const initiateDrag = (target: HTMLElement, startX: number, kfId: string, startStep: number, isTouch: boolean) => {
-    const parent = target.parentElement;
-    if (!parent) return;
-    const rect = parent.getBoundingClientRect();
-
-    const onMove = (clientX: number) => {
-      const deltaX = clientX - startX;
+    const onMove = (cx: number) => {
+      const deltaX = cx - startX;
+      // Calculate new step based on delta
       const deltaStep = (deltaX / rect.width) * totalSteps;
       timeline.updateKeyframe(videoIndex, kfId, startStep + deltaStep);
     };
 
-    if (isTouch) {
-        const onTouchMove = (e: TouchEvent) => { e.preventDefault(); onMove(e.touches[0].clientX); };
-        const onTouchEnd = () => { window.removeEventListener('touchmove', onTouchMove); window.removeEventListener('touchend', onTouchEnd); timeline.resetAfterDrag(); };
+    if ('touches' in e) {
+        // --- TOUCH HANDLING ---
+        const onTouchMove = (evt: TouchEvent) => {
+            evt.preventDefault(); // Stop scroll
+            onMove(evt.touches[0].clientX);
+        };
+        const onTouchEnd = () => {
+            window.removeEventListener('touchmove', onTouchMove);
+            window.removeEventListener('touchend', onTouchEnd);
+            timeline.resetAfterDrag();
+        };
+        // { passive: false } is CRITICAL for preventing scroll
         window.addEventListener('touchmove', onTouchMove, { passive: false });
         window.addEventListener('touchend', onTouchEnd);
     } else {
-        const onMouseMove = (e: MouseEvent) => { e.preventDefault(); onMove(e.clientX); };
-        const onMouseUp = () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); timeline.resetAfterDrag(); };
+        // --- MOUSE HANDLING ---
+        e.preventDefault(); // Stop text selection
+        const onMouseMove = (evt: MouseEvent) => {
+            evt.preventDefault();
+            onMove(evt.clientX);
+        };
+        const onMouseUp = () => {
+            window.removeEventListener('mousemove', onMouseMove);
+            window.removeEventListener('mouseup', onMouseUp);
+            timeline.resetAfterDrag();
+        };
         window.addEventListener('mousemove', onMouseMove);
         window.addEventListener('mouseup', onMouseUp);
     }
   };
 
   return (
-    <div style={{ position: 'relative', height: '40px', background: '#e5e7eb', borderRadius: '6px', margin: '15px 0', border: '1px solid #d1d5db', overflow: 'hidden', userSelect: 'none', touchAction: 'none' }}>
+    <div ref={containerRef} style={{ position: 'relative', height: '40px', background: '#e5e7eb', borderRadius: '6px', margin: '15px 0', border: '1px solid #d1d5db', overflow: 'hidden', userSelect: 'none', touchAction: 'none' }}>
       <div style={{ position: 'absolute', inset: 0, opacity: 0.1, backgroundImage: 'linear-gradient(90deg, #000 1px, transparent 1px)', backgroundSize: '20px 100%' }} />
       {/* DIRECT DOM PLAYHEAD */}
       <div ref={playheadRef} style={{ position: 'absolute', left: '0%', top: 0, bottom: 0, width: '2px', backgroundColor: '#ef4444', zIndex: 5, pointerEvents: 'none', boxShadow: '0 0 4px rgba(239, 68, 68, 0.6)' }} />
@@ -131,10 +150,16 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
         const leftPct = Math.max(0, Math.min(100, (kf.step / totalSteps) * 100));
         return (
           <div key={kf.id} 
-            onMouseDown={(e) => isEnabled && handleMouseDown(e, kf.id, kf.step)} 
-            onTouchStart={(e) => isEnabled && handleTouchStart(e, kf.id, kf.step)}
+            // Combined Handler for Mouse and Touch
+            onMouseDown={(e) => isEnabled && handleDragStart(e, kf.id, kf.step)} 
+            onTouchStart={(e) => isEnabled && handleDragStart(e, kf.id, kf.step)}
             onContextMenu={(e) => { e.preventDefault(); if (isEnabled && !isAnchor) { timeline.deleteGlobalEvent(kf.label); }}} 
-            style={{ position: 'absolute', left: `${leftPct}%`, top: '50%', transform: 'translate(-50%, -50%)', width: '30px', height: '30px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: isEnabled ? 'grab' : 'not-allowed', zIndex: 10 }} 
+            style={{ 
+                position: 'absolute', left: `${leftPct}%`, top: '50%', transform: 'translate(-50%, -50%)', 
+                width: '30px', height: '30px', 
+                display: 'flex', alignItems: 'center', justifyContent: 'center', 
+                cursor: isEnabled ? 'grab' : 'not-allowed', zIndex: 10 
+            }} 
             title={isAnchor ? kf.label : `${kf.label} (Right-click to delete)`}
           >
             <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: isEnabled ? kf.color : '#9ca3af', border: '2px solid white', boxShadow: '0 2px 4px rgba(0,0,0,0.2)', opacity: isEnabled ? 1 : 0.6 }} />

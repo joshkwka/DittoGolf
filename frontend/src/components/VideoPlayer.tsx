@@ -1,7 +1,6 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import { Timeline, SyncMode } from "../core/Timeline";
 
-// Helper to detect mobile devices
 const isMobileDevice = () => {
   return typeof window !== 'undefined' && window.innerWidth < 768;
 };
@@ -18,7 +17,7 @@ const VideoPlayer = forwardRef<HTMLVideoElement, VideoPlayerProps>(
 
     useImperativeHandle(forwardedRef, () => internalRef.current!);
 
-    // Metadata & Setup Listener
+    // Setup & Metadata
     useEffect(() => {
       const video = internalRef.current;
       if (!video) return;
@@ -27,7 +26,7 @@ const VideoPlayer = forwardRef<HTMLVideoElement, VideoPlayerProps>(
       if (video.readyState >= 1) onLoaded();
       else video.addEventListener("loadedmetadata", onLoaded);
 
-      // Disable Audio Pitch Preservation
+      // Important for desktop smoothness
       const v = video as any; 
       if ('preservesPitch' in v) v.preservesPitch = false;
       else if ('mozPreservesPitch' in v) v.mozPreservesPitch = false;
@@ -47,7 +46,7 @@ const VideoPlayer = forwardRef<HTMLVideoElement, VideoPlayerProps>(
       const unsub = timeline.subscribe((step, action, meta) => {
         if (!video) return;
 
-        // 1. Live Scrubbing (Priority)
+        // 1. Live Scrubbing (Always Priority - Desktop & Mobile)
         if (action === "preview") {
             if (meta && meta.videoIndex === videoIndex) {
                 video.currentTime = meta.step / timeline.masterFPS;
@@ -56,72 +55,90 @@ const VideoPlayer = forwardRef<HTMLVideoElement, VideoPlayerProps>(
             return; 
         }
 
-        // --- MOBILE OPTIMIZATION ---
-        tickCounter++;
-        if (isMobile && action === undefined && tickCounter % 5 !== 0) {
-            return; 
-        }
-
         const targetTime = timeline.calculateVideoTime(videoIndex, step);
-        const timeDiff = targetTime - video.currentTime;
-        const drift = Math.abs(timeDiff);
+        const signedDrift = targetTime - video.currentTime;
+        const absDrift = Math.abs(signedDrift);
 
-        // 2. Playback State
-        if (action === "play") {
-            video.play().catch(() => {});
-        } 
-        // FIX: Cast 'action' to any (or string) to suppress the overlap error
-        else if ((action as any) === "pause") {
+        // 2. Pause Handling
+        if ((action as any) === "pause") {
             video.pause();
-            if (drift > 0.05) video.currentTime = targetTime; 
+            // Only snap if we are noticeably off (prevents micro-jumps on pause)
+            if (absDrift > 0.1) video.currentTime = targetTime; 
             return;
         }
 
-        // 3. Sync Logic
+        // 3. Play Handling
+        if (action === "play") {
+            video.play().catch(() => {});
+        }
+
+        // 4. Sync Loop (Only when running)
         const isVideoRunning = !video.paused && !video.ended && video.readyState > 2;
         
-        // FIX: Cast 'action' here as well just to be safe in the comparison
         if ((action as any) !== "pause" && (action === "play" || isVideoRunning)) {
            
+           // --- MOBILE OPTIMIZATION ---
            if (isMobile) {
-               // [Mobile] Loose Sync
-               if (drift > 0.15) {
-                   video.currentTime = targetTime;
-               }
-           } 
-           else {
-               // [Desktop] Perfect Sync
-               const warpRate = timeline.getInstantaneousRate(videoIndex);
-               let finalRate = timeline.playbackRate * warpRate;
-               const isHighSpeed = timeline.playbackRate > 2;
-               const isDrifting = drift > 0.04 && drift < 0.25;
-               
-               if (isDrifting && !isHighSpeed) {
-                   finalRate += (timeDiff * 0.5); 
+               // Throttle: Only adjust speed every 15 frames (approx 2 times/sec)
+               // This prevents the CPU from being overwhelmed by constant rate updates.
+               tickCounter++;
+               if (tickCounter % 15 !== 0) return;
+
+               // A. Small Drift (Floating): Do nothing. Smoothness > Precision.
+               if (absDrift < 0.2) {
+                   // Ensure we are at normal speed (if we aren't already)
+                   const warpRate = timeline.getInstantaneousRate(videoIndex);
+                   const targetRate = timeline.playbackRate * warpRate;
+                   if (Math.abs(video.playbackRate - targetRate) > 0.1) {
+                       video.playbackRate = targetRate;
+                   }
+                   return;
                }
 
-               const safeRate = Math.max(0.0625, Math.min(finalRate, 16));
-               if (Math.abs(video.playbackRate - safeRate) > 0.01) {
-                 video.playbackRate = safeRate;
+               // B. Medium Drift (Catch Up): Use Speed, NOT Jumping
+               if (absDrift < 1.0) {
+                   const catchUpMultiplier = signedDrift > 0 ? 1.25 : 0.75; // Speed up or Slow down
+                   const warpRate = timeline.getInstantaneousRate(videoIndex);
+                   const catchUpRate = (timeline.playbackRate * warpRate) * catchUpMultiplier;
+                   
+                   // Safety Clamp (0.5x to 2.0x)
+                   video.playbackRate = Math.max(0.5, Math.min(catchUpRate, 2.0));
+                   return;
+               }
+
+               // C. Huge Drift (Stalled): Hard Snap
+               // This only happens if the video froze for a full second
+               video.currentTime = targetTime;
+           } 
+           
+           // --- DESKTOP LOGIC (High Precision) ---
+           else {
+               const warpRate = timeline.getInstantaneousRate(videoIndex);
+               let finalRate = timeline.playbackRate * warpRate;
+               
+               const isHighSpeed = timeline.playbackRate > 2;
+               
+               // Anti-Jitter
+               if (absDrift > 0.04 && absDrift < 0.25 && !isHighSpeed) {
+                   finalRate += (signedDrift * 0.5); 
+               }
+
+               // Snap if drift is too large
+               if (absDrift > 0.3) {
+                   video.currentTime = targetTime;
+               } else {
+                   // Apply micro-adjustments
+                   const safeRate = Math.max(0.0625, Math.min(finalRate, 16));
+                   if (Math.abs(video.playbackRate - safeRate) > 0.01) {
+                       video.playbackRate = safeRate;
+                   }
                }
            }
         }
 
-        // 4. Position Correction
-        const isScrubbing = action === "seek" || action === "update";
-        
-        if (isScrubbing) {
-           if (drift > 0.001) video.currentTime = targetTime;
-        } else {
-           if (!isMobile) {
-               const isWarp = timeline.syncMode === SyncMode.SYNC;
-               const baseTolerance = isWarp ? 0.25 : 0.1;
-               const dynamicTolerance = baseTolerance * Math.max(1, timeline.playbackRate);
-
-               if (drift > dynamicTolerance) {
-                 video.currentTime = targetTime;
-               }
-           }
+        // 5. Scrubbing Snap (Dragging the slider)
+        if (action === "seek" || action === "update") {
+           if (absDrift > 0.05) video.currentTime = targetTime;
         }
       });
       return unsub;
