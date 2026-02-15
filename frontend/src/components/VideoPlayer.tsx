@@ -1,5 +1,5 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle } from "react";
-import { Timeline, SyncMode } from "../core/Timeline";
+import { Timeline } from "../core/Timeline";
 
 const isMobileDevice = () => {
   return typeof window !== 'undefined' && window.innerWidth < 768;
