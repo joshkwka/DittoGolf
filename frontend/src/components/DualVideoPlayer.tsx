@@ -64,13 +64,12 @@ const SegmentAnalysis = React.memo(({ timeline }: { timeline: Timeline, dataVers
   );
 }, (prev, next) => prev.dataVersion === next.dataVersion);
 
-// --- 2. OPTIMIZED SLIDER (Restored Dual-Listener Logic) ---
+// --- 2. OPTIMIZED SLIDER (Restored DOM Traversal Logic) ---
 const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 | 1, timeline: Timeline, duration: number }) => {
   const kfs = videoIndex === 0 ? timeline.keyframesA : timeline.keyframesB;
   const totalSteps = duration > 0 ? Math.ceil(duration * 60) : 100;
   
   const playheadRef = useRef<HTMLDivElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
 
   // Update Red Playhead Position (Direct DOM)
   useEffect(() => {
@@ -85,15 +84,18 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
     return unsub;
   }, [timeline, totalSteps, videoIndex]);
 
-  // --- MOUSE HANDLER (Desktop) ---
+  // --- MOUSE HANDLER ---
   const handleMouseDown = (e: React.MouseEvent, kfId: string, startStep: number) => {
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
 
-    const container = containerRef.current;
-    if (!container) return;
-    const rect = container.getBoundingClientRect();
+    // 1. Get Parent Element directly (Stateless & Robust)
+    const target = e.currentTarget as HTMLElement;
+    const parent = target.parentElement;
+    if (!parent) return;
+
+    const rect = parent.getBoundingClientRect();
     const startX = e.clientX;
 
     const onMouseMove = (evt: MouseEvent) => {
@@ -113,19 +115,22 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
     window.addEventListener('mouseup', onMouseUp);
   };
 
-  // --- TOUCH HANDLER (Mobile - Critical Fix) ---
+  // --- TOUCH HANDLER ---
   const handleTouchStart = (e: React.TouchEvent, kfId: string, startStep: number) => {
     e.stopPropagation();
-    // Do NOT preventDefault here, or 'click' events (like selecting) might break.
-    // We preventDefault inside the 'move' listener instead.
+    // Note: We do NOT preventDefault here to allow 'click' events (like context menu) to potentially fire.
+    // We prevent scrolling in the 'touchmove' listener instead.
 
-    const container = containerRef.current;
-    if (!container) return;
-    const rect = container.getBoundingClientRect();
+    // 1. Get Parent Element directly
+    const target = e.currentTarget as HTMLElement;
+    const parent = target.parentElement;
+    if (!parent) return;
+
+    const rect = parent.getBoundingClientRect();
     const startX = e.touches[0].clientX;
 
     const onTouchMove = (evt: TouchEvent) => {
-      // CRITICAL: This stops the page from scrolling while you drag
+      // 2. STOP SCROLLING
       if (evt.cancelable) evt.preventDefault(); 
       
       const deltaX = evt.touches[0].clientX - startX;
@@ -139,20 +144,19 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
       timeline.resetAfterDrag();
     };
 
-    // { passive: false } allows us to call preventDefault()
+    // 3. Attach Passive: False listener to allow preventing scroll
     window.addEventListener('touchmove', onTouchMove, { passive: false });
     window.addEventListener('touchend', onTouchEnd);
   };
 
   return (
     <div 
-        ref={containerRef} 
         style={{ 
             position: 'relative', height: '40px', 
             background: '#e5e7eb', borderRadius: '6px', margin: '15px 0', 
             border: '1px solid #d1d5db', overflow: 'hidden', 
             userSelect: 'none', 
-            touchAction: 'none' // CSS backup
+            touchAction: 'none' 
         }}
     >
       <div style={{ position: 'absolute', inset: 0, opacity: 0.1, backgroundImage: 'linear-gradient(90deg, #000 1px, transparent 1px)', backgroundSize: '20px 100%' }} />
@@ -164,13 +168,13 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
         const leftPct = Math.max(0, Math.min(100, (kf.step / totalSteps) * 100));
         return (
           <div key={kf.id} 
-            // Explicitly attach both handlers
             onMouseDown={(e) => isEnabled && handleMouseDown(e, kf.id, kf.step)} 
             onTouchStart={(e) => isEnabled && handleTouchStart(e, kf.id, kf.step)}
             onContextMenu={(e) => { e.preventDefault(); if (isEnabled && !isAnchor) { timeline.deleteGlobalEvent(kf.label); }}} 
             style={{ 
                 position: 'absolute', left: `${leftPct}%`, top: '50%', transform: 'translate(-50%, -50%)', 
-                width: '40px', height: '40px', // Larger touch target
+                // Increased touch target to 44px (Standard Minimum)
+                width: '44px', height: '44px', 
                 display: 'flex', alignItems: 'center', justifyContent: 'center', 
                 cursor: isEnabled ? 'grab' : 'not-allowed', zIndex: 10,
                 touchAction: 'none' 
