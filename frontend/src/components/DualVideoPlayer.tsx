@@ -64,7 +64,7 @@ const SegmentAnalysis = React.memo(({ timeline }: { timeline: Timeline, dataVers
   );
 }, (prev, next) => prev.dataVersion === next.dataVersion);
 
-// --- 2. OPTIMIZED SLIDER (Self-Updating) ---
+// --- 2. OPTIMIZED SLIDER (With Live Drag Feedback) ---
 const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 | 1, timeline: Timeline, duration: number }) => {
   const kfs = videoIndex === 0 ? timeline.keyframesA : timeline.keyframesB;
   const totalSteps = duration > 0 ? Math.ceil(duration * 60) : 100;
@@ -72,22 +72,20 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
   const playheadRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // FORCE RENDER: Local state to force React to update when keys move
+  // FORCE RENDER: Local state to update UI when dragging dots
   const [, setTick] = useState(0);
 
-  // 1. Subscribe to Timeline Updates
+  // 1. Subscribe to Timeline Updates (Playback & External Changes)
   useEffect(() => {
     const unsub = timeline.subscribe((step, action) => {
-        // A. Handle Red Playhead (No React Render needed, direct DOM)
+        // A. Handle Red Playhead (Direct DOM)
         if (playheadRef.current && (action === undefined || action === 'seek' || action === 'play')) {
              const currentTime = timeline.calculateVideoTime(videoIndex, step);
              const currentStep = currentTime * timeline.masterFPS;
              const pct = (currentStep / totalSteps) * 100;
              playheadRef.current.style.left = `${pct}%`;
         }
-
-        // B. Handle Keyframe Moves (Force React Re-render)
-        // When we drag ("update") or delete/add events, we must re-draw the dots.
+        // B. Handle External Updates (e.g., Undo/Redo or delete)
         if (action === "update") {
             setTick(t => t + 1);
         }
@@ -109,7 +107,12 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
       evt.preventDefault();
       const deltaX = evt.clientX - startX;
       const deltaStep = (deltaX / rect.width) * totalSteps;
+      
+      // Update Data
       timeline.updateKeyframe(videoIndex, kfId, startStep + deltaStep);
+      
+      // FIX: Force React to re-render immediately so we see the dot move
+      setTick(t => t + 1);
     };
 
     const onMouseUp = () => {
@@ -133,9 +136,15 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
 
     const onTouchMove = (evt: TouchEvent) => {
       if (evt.cancelable) evt.preventDefault(); // Stop Scroll
+      
       const deltaX = evt.touches[0].clientX - startX;
       const deltaStep = (deltaX / rect.width) * totalSteps;
+      
+      // Update Data
       timeline.updateKeyframe(videoIndex, kfId, startStep + deltaStep);
+
+      // FIX: Force React to re-render immediately
+      setTick(t => t + 1);
     };
 
     const onTouchEnd = () => {
@@ -150,7 +159,7 @@ const CalibrationSlider = ({ videoIndex, timeline, duration }: { videoIndex: 0 |
 
   return (
     <div 
-        ref={containerRef} // Important for width calc
+        ref={containerRef} 
         style={{ 
             position: 'relative', height: '40px', 
             background: '#e5e7eb', borderRadius: '6px', margin: '15px 0', 
