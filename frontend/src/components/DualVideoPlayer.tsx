@@ -72,10 +72,8 @@ const CalibrationSlider = ({ videoIndex, timeline, duration, videoRef }: { video
   const playheadRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // FORCE RENDER: Local state to update UI when dragging dots
   const [, setTick] = useState(0);
 
-  // 1. Subscribe to Timeline Updates
   useEffect(() => {
     const unsub = timeline.subscribe((step, action) => {
         if (playheadRef.current && (action === undefined || action === 'seek' || action === 'play')) {
@@ -91,17 +89,14 @@ const CalibrationSlider = ({ videoIndex, timeline, duration, videoRef }: { video
     return unsub;
   }, [timeline, totalSteps, videoIndex]);
 
-  // --- UNIFIED DRAG HANDLER (Mouse + Touch) ---
   const handleDragStart = (e: React.MouseEvent | React.TouchEvent, kfId: string, startStep: number) => {
     if ('button' in e && e.button !== 0) return;
     
-    // We don't preventDefault here to allow clicks, but we stop propagation
     e.stopPropagation();
 
     const container = containerRef.current;
     if (!container) return;
     
-    // Get start X
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const rect = container.getBoundingClientRect();
     const startX = clientX;
@@ -111,25 +106,18 @@ const CalibrationSlider = ({ videoIndex, timeline, duration, videoRef }: { video
       const deltaStep = (deltaX / rect.width) * totalSteps;
       const newStep = startStep + deltaStep;
       
-      // 1. Update Data
       timeline.updateKeyframe(videoIndex, kfId, newStep);
-      
-      // 2. Force React Render (moves the dot)
       setTick(t => t + 1);
 
-      // 3. CRITICAL FIX: Force Video Preview (Direct DOM)
       if (videoRef) {
-          // Pause if playing so we don't fight the loop
           if (!videoRef.paused) videoRef.pause();
-          // Set time directly to match the dragged keyframe
           videoRef.currentTime = newStep / timeline.masterFPS;
       }
     };
 
     if ('touches' in e) {
-        // Touch
         const onTouchMove = (evt: TouchEvent) => {
-            if (evt.cancelable) evt.preventDefault(); // Stop Scroll
+            if (evt.cancelable) evt.preventDefault(); 
             onMove(evt.touches[0].clientX);
         };
         const onTouchEnd = () => {
@@ -140,7 +128,6 @@ const CalibrationSlider = ({ videoIndex, timeline, duration, videoRef }: { video
         window.addEventListener('touchmove', onTouchMove, { passive: false });
         window.addEventListener('touchend', onTouchEnd);
     } else {
-        // Mouse
         const onMouseMove = (evt: MouseEvent) => {
             evt.preventDefault();
             onMove(evt.clientX);
@@ -255,10 +242,14 @@ export default function DualVideoPlayer({
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([null, null]);
   const isMobile = useIsMobile();
   
-  // NEW: State to control layout mode (defaulting to column on mobile)
   const [layoutMode, setLayoutMode] = useState<'row' | 'col'>('col');
 
-  // Sync initial layout with device type
+  // NEW: Overlay State
+  const [isOverlayMode, setIsOverlayMode] = useState(false);
+  const [overlayOpacity, setOverlayOpacity] = useState(0.5);
+  const [overlayPos, setOverlayPos] = useState({ x: 0, y: 0 });
+  const [overlayScale, setOverlayScale] = useState(1.0);
+
   useEffect(() => {
       setLayoutMode(isMobile ? 'col' : 'row');
   }, [isMobile]);
@@ -280,7 +271,6 @@ export default function DualVideoPlayer({
       timeline.addGlobalEvent(label);
   }
 
-  // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
@@ -303,16 +293,21 @@ export default function DualVideoPlayer({
     <div style={{ padding: "20px", fontFamily: "system-ui, sans-serif", maxWidth: isMobile ? "100vw" : "95vw", margin: "0 auto", color: "#1f2937" }}>
       
       {/* Top Bar */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: "10px" }}>
         <div>
             <h1 style={{ fontSize: '24px', fontWeight: '800', margin: 0 }}>Ditto<span style={{color:'#ef4444'}}>.Golf</span></h1>
             <p style={{ margin: 0, fontSize: '14px', color: '#6b7280' }}>{timeline.syncMode === SyncMode.SYNC ? "Synced Mode Active" : "Linear Playback"}</p>
         </div>
-        <div style={{ display: 'flex', gap: '8px' }}>
-            {/* Toggle Layout Button */}
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <button 
+                onClick={() => setIsOverlayMode(!isOverlayMode)}
+                style={{ ...btnStyle, background: isOverlayMode ? '#ef4444' : 'white', color: isOverlayMode ? 'white' : 'black', borderColor: isOverlayMode ? '#ef4444' : '#d1d5db' }}
+            >
+                {isOverlayMode ? "Exit Overlay" : "Overlay Mode"}
+            </button>
             <button 
                 onClick={() => setLayoutMode(prev => prev === 'row' ? 'col' : 'row')}
-                style={btnStyle}
+                style={{...btnStyle, opacity: isOverlayMode ? 0.5 : 1, pointerEvents: isOverlayMode ? 'none' : 'auto'}}
                 title="Switch Layout"
             >
                 Layout: {layoutMode === 'row' ? "⬍" : "⬌"}
@@ -321,22 +316,85 @@ export default function DualVideoPlayer({
         </div>
       </div>
 
+      {/* Overlay Active Controls */}
+      {isOverlayMode && (
+         <div style={{ display: 'flex', gap: '20px', alignItems: 'center', background: '#1f2937', padding: '12px 20px', borderRadius: '12px', color: 'white', marginBottom: '20px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#9ca3af' }}>Reference Opacity</label>
+                <input type="range" min="0" max="1" step="0.05" value={overlayOpacity} onChange={e => setOverlayOpacity(Number(e.target.value))} style={{ accentColor: '#ef4444', cursor: 'pointer' }} />
+            </div>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#9ca3af' }}>Position (Reference)</span>
+                <div style={{ display: 'flex', gap: '5px' }}>
+                    <button style={smallBtnStyle} onClick={() => setOverlayPos(p => ({...p, x: p.x - 10}))}>←</button>
+                    <button style={smallBtnStyle} onClick={() => setOverlayPos(p => ({...p, x: p.x + 10}))}>→</button>
+                    <button style={smallBtnStyle} onClick={() => setOverlayPos(p => ({...p, y: p.y - 10}))}>↑</button>
+                    <button style={smallBtnStyle} onClick={() => setOverlayPos(p => ({...p, y: p.y + 10}))}>↓</button>
+                </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#9ca3af' }}>Scale (Reference)</span>
+                <div style={{ display: 'flex', gap: '5px' }}>
+                    <button style={smallBtnStyle} onClick={() => setOverlayScale(s => Math.max(0.1, s - 0.05))}>-</button>
+                    <button style={smallBtnStyle} onClick={() => setOverlayScale(s => s + 0.05)}>+</button>
+                </div>
+            </div>
+
+            <button style={{ ...smallBtnStyle, marginLeft: 'auto', background: '#ef4444', borderColor: '#ef4444' }} onClick={() => { setOverlayPos({x:0, y:0}); setOverlayScale(1); setOverlayOpacity(0.5); }}>Reset View</button>
+         </div>
+      )}
+
       {/* Main Video Grid */}
       <div style={{ background: '#000', padding: isMobile ? '10px' : '20px', borderRadius: '16px', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)' }}>
-        <div style={{ display: "grid", gridTemplateColumns: layoutMode === 'col' ? "1fr" : "1fr 1fr", gap: "20px" }}>
+        
+        {/* Render headers outside the grid in overlay mode so they don't cover the videos */}
+        {isOverlayMode && (
+             <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '20px', marginBottom: '15px' }}>
+                 <VideoHeader label="Reference (Top)" onClear={handleClear1} onReplace={handleReplace1} />
+                 <VideoHeader label="Student (Base)" onClear={handleClear2} onReplace={handleReplace2} />
+             </div>
+        )}
+
+        <div style={isOverlayMode ? {
+            position: 'relative', 
+            height: isMobile ? '50vh' : '75vh', 
+            minHeight: '300px', 
+            width: '100%', 
+            background: '#111', 
+            borderRadius: '8px', 
+            overflow: 'hidden'
+        } : { 
+            display: "grid", 
+            gridTemplateColumns: layoutMode === 'col' ? "1fr" : "1fr 1fr", 
+            gap: "20px" 
+        }}>
             
-            {/* Left */}
-            <div>
-                <VideoHeader label="Reference (Left)" onClear={handleClear1} onReplace={handleReplace1} />
-                <div style={{ height: isMobile ? '40vh' : '60vh', minHeight: isMobile ? '250px' : '400px', width: '100%', background: '#111', borderRadius: '8px', overflow: 'hidden' }}>
+            {/* Left (Reference) */}
+            <div style={isOverlayMode ? {
+                position: 'absolute', 
+                inset: 0, 
+                zIndex: 10, 
+                opacity: overlayOpacity, 
+                transform: `translate(${overlayPos.x}px, ${overlayPos.y}px) scale(${overlayScale})`, 
+                pointerEvents: 'none', 
+                transition: 'opacity 0.1s' 
+            } : {}}>
+                {!isOverlayMode && <VideoHeader label="Reference (Left)" onClear={handleClear1} onReplace={handleReplace1} />}
+                <div style={{ height: isOverlayMode ? '100%' : (isMobile ? '40vh' : '60vh'), minHeight: isOverlayMode ? '100%' : (isMobile ? '250px' : '400px'), width: '100%', background: isOverlayMode ? 'transparent' : '#111', borderRadius: '8px', overflow: 'hidden' }}>
                     <MemoizedVideoPlayer src={video1Src} timeline={timeline} videoIndex={0} ref={(el) => { videoRefs.current[0] = el; }} />
                 </div>
             </div>
 
-            {/* Right */}
-            <div>
-                <VideoHeader label="Student (Right)" onClear={handleClear2} onReplace={handleReplace2} />
-                <div style={{ height: isMobile ? '40vh' : '60vh', minHeight: isMobile ? '250px' : '400px', width: '100%', background: '#111', borderRadius: '8px', overflow: 'hidden' }}>
+            {/* Right (Student) */}
+            <div style={isOverlayMode ? {
+                position: 'absolute', 
+                inset: 0, 
+                zIndex: 1 
+            } : {}}>
+                {!isOverlayMode && <VideoHeader label="Student (Right)" onClear={handleClear2} onReplace={handleReplace2} />}
+                <div style={{ height: isOverlayMode ? '100%' : (isMobile ? '40vh' : '60vh'), minHeight: isOverlayMode ? '100%' : (isMobile ? '250px' : '400px'), width: '100%', background: isOverlayMode ? '#000' : '#111', borderRadius: '8px', overflow: 'hidden' }}>
                     <MemoizedVideoPlayer src={video2Src} timeline={timeline} videoIndex={1} ref={(el) => { videoRefs.current[1] = el; }} />
                 </div>
             </div>
@@ -347,7 +405,7 @@ export default function DualVideoPlayer({
       <Scrubber timeline={timeline} />
 
       {/* Playback Controls */}
-      <div style={{ display: "flex", gap: 12, marginTop: 20, alignItems: "center", justifyContent: "center", background: "#f3f4f6", padding: "12px", borderRadius: "12px" }}>
+      <div style={{ display: "flex", gap: 12, marginTop: 20, alignItems: "center", justifyContent: "center", background: "#f3f4f6", padding: "12px", borderRadius: "12px", flexWrap: "wrap" }}>
         <button onClick={() => timeline.stepFrames(-1)} style={btnStyle}>Prev</button>
         <button onClick={() => timeline.isPlaying ? timeline.pause() : timeline.play()} style={{ ...btnStyle, background: '#1f2937', color: 'white', minWidth: '80px' }}>{timeline.isPlaying ? "Pause" : "Play"}</button>
         <button onClick={() => timeline.stepFrames(1)} style={btnStyle}>Next</button>
@@ -359,9 +417,9 @@ export default function DualVideoPlayer({
       {/* Settings Panel */}
       {isSettingsOpen && (
         <div style={{ marginTop: 20, padding: 25, background: "white", borderRadius: 12, border: '1px solid #e5e7eb', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '10px' }}>
             <h3 style={{ margin: 0, fontSize: '18px' }}>Sync Editor</h3>
-            <div style={{ display: 'flex', gap: '10px' }}>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                <select style={selectStyle} disabled={!timeline.keyframesEnabled} onChange={(e) => { handleAddEvent(e.target.value); e.target.value = ""; }}>
                    <option value="">+ Add Event Marker</option>
                    {SWING_STAGES.map(stage => { const exists = timeline.keyframesA.some(k => k.label === stage); return <option key={stage} value={stage} disabled={exists}>{stage} {exists ? '(Added)' : ''}</option> })}
@@ -373,7 +431,6 @@ export default function DualVideoPlayer({
           {[0, 1].map((idx) => (
             <div key={idx} style={{ marginBottom: '20px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}><span style={{ fontWeight: 600, fontSize: '14px' }}>Video {idx + 1} Markers</span></div>
-              {/* IMPORTANT: Pass the videoRef to enable instant preview */}
               <CalibrationSlider 
                   videoIndex={idx as 0 | 1} 
                   timeline={timeline} 
@@ -392,4 +449,5 @@ export default function DualVideoPlayer({
 }
 
 const btnStyle = { padding: '8px 14px', borderRadius: '6px', border: '1px solid #d1d5db', background: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: 500 };
+const smallBtnStyle = { padding: '6px 10px', borderRadius: '4px', border: '1px solid #4b5563', background: '#374151', color: 'white', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold' };
 const selectStyle = { padding: '8px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '13px', cursor: 'pointer' };
